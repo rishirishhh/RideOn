@@ -25,17 +25,19 @@ func main() {
 	}
 	defer tripService.Close()
 
-	handler := NewTripHandler(tripService)
+	handler := NewTripHandler(tripService.Client)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /trip/preview", enableCORS(handler.handleTripPreview))
-	mux.HandleFunc("POST /trip/start", enableCORS(handler.handleTripStart))
+	mux.HandleFunc("POST /trip/preview", handler.handleTripPreview)
+	mux.HandleFunc("POST /trip/start", handler.handleTripStart)
 	mux.HandleFunc("/ws/drivers", handleDriveWebsocket)
 	mux.HandleFunc("/ws/riders", handleRidersWebsocket)
 
 	server := &http.Server{
-		Addr:    httpAddr,
-		Handler: mux,
+		Addr:              httpAddr,
+		Handler:           enableCORS(mux.ServeHTTP),
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	serverErrors := make(chan error, 1)

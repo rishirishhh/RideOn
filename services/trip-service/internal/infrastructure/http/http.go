@@ -13,9 +13,9 @@ type HttpHandler struct {
 }
 
 type previewTripRequest struct {
-	UserID      string           `json:"userID"`
-	Pickup      types.Coordinate `json:"pickup"`
-	Destination types.Coordinate `json:"destination"`
+	UserID      string            `json:"userID"`
+	Pickup      *types.Coordinate `json:"pickup"`
+	Destination *types.Coordinate `json:"destination"`
 }
 
 func (s *HttpHandler) HandleTripPreview(w http.ResponseWriter, r *http.Request) {
@@ -26,14 +26,16 @@ func (s *HttpHandler) HandleTripPreview(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// fare := &domain.RideFareModel{
-	// 	UserID: "42",
-	// }
-
+	if reqBody.UserID == "" || !reqBody.Pickup.Valid() || !reqBody.Destination.Valid() {
+		http.Error(w, "userID and valid coordinates are required", http.StatusBadRequest)
+		return
+	}
 	ctx := r.Context()
-	t, err := s.Service.GetRoute(ctx, &reqBody.Pickup, &reqBody.Destination)
+	t, err := s.Service.GetRoute(ctx, reqBody.Pickup, reqBody.Destination)
 	if err != nil {
 		log.Println(err)
+		http.Error(w, "failed to get route", http.StatusBadGateway)
+		return
 	}
 
 	writeJSON(w, http.StatusOK, t)

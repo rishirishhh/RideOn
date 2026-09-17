@@ -6,6 +6,7 @@ import (
 	"ride-sharing/services/trip-service/internal/domain"
 	pb "ride-sharing/shared/proto/trip"
 	"ride-sharing/shared/types"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -33,6 +34,9 @@ func (h *gRPCHandler) PreviewTrip(ctx context.Context, req *pb.PreviewTripReques
 	pickup := req.GetStartLocation()
 	destination := req.GetEndLocation()
 
+	if pickup == nil || destination == nil || strings.TrimSpace(req.GetUserID()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "userID, pickup and destination are required")
+	}
 	pickupCoord := &types.Coordinate{
 		Latitude:  pickup.Latitude,
 		Longitude: pickup.Longitude,
@@ -42,20 +46,37 @@ func (h *gRPCHandler) PreviewTrip(ctx context.Context, req *pb.PreviewTripReques
 		Longitude: destination.Longitude,
 	}
 
+	if !pickupCoord.Valid() || !destinationCoord.Valid() {
+		return nil, status.Error(codes.InvalidArgument, "invalid pickup or destination")
+	}
 	userID := req.GetUserID()
 	t, err := h.service.GetRoute(ctx, pickupCoord, destinationCoord)
 	if err != nil {
-		log.Println(err)
-		return nil, status.Errorf(codes.Internal, "failed to get route: %v", err)
+		return nil, rpcError(ctx, "failed to get route", err)
 	}
 
-	estimatedFares := h.service.EstimatePackagesPriceWithRoute(t)
+	route, err := t.ToProto()
+	if err != nil {
+		return nil, rpcError(ctx, "invalid route", err)
+	}
+	estimatedFares, err := h.service.EstimatePackagesPriceWithRoute(t)
+	if err != nil {
+		return nil, rpcError(ctx, "failed to estimate fares", err)
+	}
 	fares, err := h.service.GenerateTripFares(ctx, estimatedFares, userID)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get route: %v", err)
+		return nil, rpcError(ctx, "failed to save fares", err)
 	}
 	return &pb.PreviewTripResponse{
-		Route:     t.ToProto(),
+		Route:     route,
 		RideFares: domain.ToRideFaresProto(fares),
 	}, nil
+}
+
+func rpcError(ctx context.Context, message string, err error) error {
+	log.Printf("%s: %v", message, err)
+	if ctx.Err() != nil {
+		return status.FromContextError(ctx.Err()).Err()
+	}
+	return status.Error(codes.Internal, message)
 }

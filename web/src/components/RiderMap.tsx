@@ -75,7 +75,7 @@ export default function RiderMap({ onRouteSelected }: RiderMapProps) {
             console.log(data)
 
             const parsedRoute = data.route.geometry[0].coordinates
-                .map((coord) => [coord.longitude, coord.latitude] as [number, number])
+                .map((coord) => [coord.latitude, coord.longitude] as [number, number])
 
             setTrip({
                 tripID: "",

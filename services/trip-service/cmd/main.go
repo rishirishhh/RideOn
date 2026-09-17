@@ -4,12 +4,16 @@ import (
 	"context"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"ride-sharing/services/trip-service/internal/infrastructure/grpc"
 	"ride-sharing/services/trip-service/internal/infrastructure/repository"
+	"ride-sharing/services/trip-service/internal/infrastructure/routing"
 	"ride-sharing/services/trip-service/internal/service"
+	"ride-sharing/shared/env"
 	"syscall"
+	"time"
 
 	grpcserver "google.golang.org/grpc"
 )
@@ -18,7 +22,8 @@ var GrpcAddr = ":9093"
 
 func main() {
 	inmemRepo := repository.NewInmemRepository()
-	svc := service.NewService(inmemRepo)
+	router := routing.NewOSRM(&http.Client{Timeout: 4 * time.Second}, env.GetString("OSRM_URL", "http://router.project-osrm.org"))
+	svc := service.NewService(inmemRepo, router)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

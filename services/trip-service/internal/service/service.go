@@ -2,10 +2,7 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"ride-sharing/services/trip-service/internal/domain"
 	tripTypes "ride-sharing/services/trip-service/pkg/types"
 
@@ -15,14 +12,23 @@ import (
 )
 
 type Service struct {
-	repo domain.TripRepository
+	repo   domain.TripRepository
+	router RouteProvider
 }
 
-func NewService(repo domain.TripRepository) *Service {
-	return &Service{repo: repo}
+// RouteProvider isolates routing I/O from trip business logic.
+type RouteProvider interface {
+	GetRoute(context.Context, *types.Coordinate, *types.Coordinate) (*tripTypes.OsrmApiResponse, error)
+}
+
+func NewService(repo domain.TripRepository, router RouteProvider) *Service {
+	return &Service{repo: repo, router: router}
 }
 
 func (s *Service) CreateTrip(ctx context.Context, fare *domain.RideFareModel) (*domain.TripModel, error) {
+	if fare == nil {
+		return nil, fmt.Errorf("ride fare is required")
+	}
 	t := &domain.TripModel{
 		ID:       primitive.NewObjectID(),
 		UserID:   fare.UserID,
@@ -38,53 +44,23 @@ func (s *Service) GetRoute(
 	pickup, destination *types.Coordinate,
 ) (*tripTypes.OsrmApiResponse, error) {
 
-	url := fmt.Sprintf(
-		"http://router.project-osrm.org/route/v1/driving/%f,%f;%f,%f?overview=full&geometries=geojson",
-		pickup.Longitude,
-		pickup.Latitude,
-		destination.Longitude,
-		destination.Latitude,
-	)
-
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		url,
-		nil,
-	)
+	if !pickup.Valid() || !destination.Valid() {
+		return nil, fmt.Errorf("invalid pickup or destination")
+	}
+	route, err := s.router.GetRoute(ctx, pickup, destination)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create OSRM request: %w", err)
+		return nil, err
 	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call OSRM: %w", err)
+	if err := route.Validate(); err != nil {
+		return nil, err
 	}
-
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf(
-			"OSRM returned status code: %d",
-			resp.StatusCode,
-		)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read OSRM response: %w", err)
-	}
-
-	var routeResp tripTypes.OsrmApiResponse
-
-	if err := json.Unmarshal(body, &routeResp); err != nil {
-		return nil, fmt.Errorf("failed to parse OSRM response: %w", err)
-	}
-
-	return &routeResp, nil
+	return route, nil
 }
 
-func (s *Service) EstimatePackagesPriceWithRoute(route *tripTypes.OsrmApiResponse) []*domain.RideFareModel {
+func (s *Service) EstimatePackagesPriceWithRoute(route *tripTypes.OsrmApiResponse) ([]*domain.RideFareModel, error) {
+	if err := route.Validate(); err != nil {
+		return nil, err
+	}
 	baseFares := getBaseFares()
 
 	estimatedFares := make([]*domain.RideFareModel, len(baseFares))
@@ -92,7 +68,7 @@ func (s *Service) EstimatePackagesPriceWithRoute(route *tripTypes.OsrmApiRespons
 	for i, f := range baseFares {
 		estimatedFares[i] = estimateFareRoute(f, route)
 	}
-	return estimatedFares
+	return estimatedFares, nil
 }
 
 func (s *Service) GenerateTripFares(ctx context.Context, rideFares []*domain.RideFareModel, userID string) ([]*domain.RideFareModel, error) {
